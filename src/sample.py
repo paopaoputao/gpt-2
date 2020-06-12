@@ -41,12 +41,14 @@ def top_p_logits(logits, p):
 
 
 def sample_sequence(*, hparams, length, start_token=None, batch_size=None, context=None, temperature=1, top_k=0, top_p=1):
+    # start_token和context有且仅有一个是None，另一个是`id`序列
     if start_token is None:
         assert context is not None, 'Specify exactly one of start_token and context!'
     else:
         assert context is None, 'Specify exactly one of start_token and context!'
         context = tf.fill([batch_size, 1], start_token)
 
+    # `past`是向量形式的历史序列，`tokens`是id形式的当前输入序列，后面attn计算的时候会cat成一个大向量
     def step(hparams, tokens, past=None):
         lm_output = model.model(hparams=hparams, X=tokens, past=past, reuse=tf.AUTO_REUSE)
 
@@ -93,3 +95,28 @@ def sample_sequence(*, hparams, length, start_token=None, batch_size=None, conte
         )
 
         return tokens
+
+if __name__ == '__main__':
+    import os
+    import json
+    import model, encoder
+
+    models_dir, model_name = 'models', '124M'
+    models_dir = os.path.expanduser(os.path.expandvars(models_dir))
+    enc = encoder.get_encoder(model_name, models_dir)
+    hparams = model.default_hparams()
+    with open(os.path.join(models_dir, model_name, 'hparams.json')) as f:
+        hparams.override_from_dict(json.load(f))
+
+    with tf.Session(graph=tf.Graph()) as sess:
+        context = tf.placeholder(tf.int32, [1, None])
+        output = sample_sequence(hparams=hparams, length=10, start_token=None, batch_size=1,
+                                 context=context, temperature=1, top_k=0, top_p=1)
+        saver = tf.train.Saver()
+        ckpt = tf.train.latest_checkpoint(os.path.join(models_dir, model_name))
+        saver.restore(sess, ckpt)
+
+        raw_text = '我爱你。'
+        out = sess.run(output, feed_dict={context: [enc.encode(raw_text)]})[0]
+        text = enc.decode(out)
+        print(text)
